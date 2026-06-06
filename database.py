@@ -51,57 +51,50 @@ class TimeSeriesRepository:
         return document
 
     @staticmethod
+    def findLatest(asset_id: str, source_id: Optional[str] = None, business_date: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """
+        Versión bi-temporal corregida. Soporta firmas simples y consultas
+        acotadas de verificación de idempotencia para el pipeline de ingesta[cite: 292, 620].
+        """
+        query = {"assetId": asset_id}
+        if source_id:
+            query["dataSourceId"] = source_id
+        if business_date:
+            query["business_date"] = business_date
+            
+        cursor = timeseries_col.find(query, {"_id": 0}).sort("system_date", -1).limit(1)
+        results = list(cursor)
+        return results[0] if results else None
+
+    @staticmethod
     def findConsumptionData(asset_id: str, source_id: str, start_date: str, end_date: str) -> List[Dict[str, Any]]:
-        """
-        [REQ 3] Busca registros en la partición en el rango [start_date, end_date)[cite: 766].
-        Maneja internamente la deduplicación bi-temporal (deja solo el system_date más reciente).
-        Devuelve el resultado ordenado cronológicamente de forma descendente.
-        """
-        # 1. Consultar el rango indexado de la partición (Asset + Source)
         query = {
             "assetId": asset_id,
             "dataSourceId": source_id,
-            "business_date": {"$gte": start_date, "$lt": end_date} # Rango de negocio excluyente [cite: 766]
+            "business_date": {"$gte": start_date, "$lt": end_date}
         }
-        cursor = timeseries_col.find(query, {"_id": 0}).sort("system_date", -1) # Trae primero lo último auditado [cite: 511]
+        cursor = timeseries_col.find(query, {"_id": 0}).sort("system_date", -1)
         
-        # 2. Algoritmo bi-temporal en memoria para conservar solo la versión más reciente por Business Date [cite: 767, 820]
         seen_business_dates = set()
         deduplicated_records = []
-        
         for record in cursor:
             b_date = record["business_date"]
             if b_date not in seen_business_dates:
                 seen_business_dates.add(b_date)
                 deduplicated_records.append(record)
                 
-        # 3. Re-ordenar cronológicamente de forma descendente por business_date (exigencia estricta Q5) 
         deduplicated_records.sort(key=lambda x: x["business_date"], reverse=True)
         return deduplicated_records
 
-def seed_database():
-    """Inicialización con los datos exactos del PDF de Consumo[cite: 753, 776]."""
-    assets_col.delete_many({})
-    timeseries_col.delete_many({})
-    
-    # Activos de prueba con los identificadores jerárquicos del PDF 
-    AssetRepository.save("QDL/BITFINEX/BTCUSD", "BTCUSD", "crypto", "Bitcoin / USD", "Global", {"status": "active"})
-    AssetRepository.save("QDL/BITFINEX/SOLUSD", "SOLUSD", "crypto", "Solana / USD", "Global", {"status": "active"})
-    
-    # Insertar registros para probar la unificación bi-temporal (Múltiples versiones para una fecha de mercado) 
-    TimeSeriesRepository.save(
-        asset_id="QDL/BITFINEX/BTCUSD", source_id="BITFINEX", business_date="2018-01-05",
-        indicators={"attr_id1": 11000.0, "attr_id2": 55000.0}, system_date=datetime(2023, 1, 1) # Antigua [cite: 753]
-    )
-    TimeSeriesRepository.save(
-        asset_id="QDL/BITFINEX/BTCUSD", source_id="BITFINEX", business_date="2018-01-05",
-        indicators={"attr_id1": 11200.0, "attr_id2": 55200.0}, system_date=datetime(2025, 4, 4) # Corrección más reciente [cite: 753, 767]
-    )
-    TimeSeriesRepository.save(
-        asset_id="QDL/BITFINEX/BTCUSD", source_id="BITFINEX", business_date="2018-01-06",
-        indicators={"attr_id1": 11500.0, "attr_id3": 99.0} # Otra fecha de negocio [cite: 778]
-    )
-    print("✅ Datos de consumo y control bi-temporal cargados.")
-
-if __name__ == "__main__":
-    seed_database()
+    @staticmethod
+    def findAll(asset_id: Optional[str] = None, source_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        Método explícito requerido por la suite de pruebas obligatoria test_dal.py[cite: 292, 301].
+        """
+        query = {}
+        if asset_id:
+            query["assetId"] = asset_id
+        if source_id:
+            query["dataSourceId"] = source_id
+        cursor = timeseries_col.find(query, {"_id": 0}).sort("business_date", 1)
+        return list(cursor)

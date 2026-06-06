@@ -40,16 +40,26 @@ class AssetRepository:
 class TimeSeriesRepository:
     @staticmethod
     def save(asset_id: str, source_id: str, business_date: str, indicators: Dict[str, Any], system_date: Optional[datetime] = None) -> Dict[str, Any]:
-        document = {
+        """
+        Garantiza la idempotencia mediante un Upsert Atómico en MongoDB usando una
+        clave compuesta por assetId, dataSourceId y la fecha de negocio.
+        """
+        query = {
             "assetId": asset_id,
             "dataSourceId": source_id,
-            "business_date": business_date,
-            "system_date": system_date or datetime.utcnow(),
-            "values": indicators
+            "business_date": business_date
         }
-        timeseries_col.insert_one(document)
-        return document
-
+        
+        document = {
+            "$set": {
+                "system_date": system_date or datetime.utcnow(),
+                "values": indicators
+            }
+        }
+        
+       
+        timeseries_col.update_one(query, document, upsert=True)
+        return {"assetId": asset_id, "dataSourceId": source_id, "business_date": business_date, "values": indicators}
     @staticmethod
     def findLatest(asset_id: str, source_id: Optional[str] = None, business_date: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """
